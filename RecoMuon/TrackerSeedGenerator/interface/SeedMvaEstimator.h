@@ -1,5 +1,5 @@
-#ifndef __PhysicsTools_PatAlgos_SeedMvaEstimator__
-#define __PhysicsTools_PatAlgos_SeedMvaEstimator__
+#ifndef SeedMvaEstimator_h
+#define SeedMvaEstimator_h
 
 #include "DataFormats/Common/interface/Handle.h"
 
@@ -14,9 +14,6 @@
 #include "DataFormats/RecoCandidate/interface/RecoChargedCandidate.h"
 #include "DataFormats/RecoCandidate/interface/RecoChargedCandidateFwd.h"
 
-// #include "DataFormats/L1TCorrelator/interface/TkMuon.h"
-// #include "DataFormats/L1TCorrelator/interface/TkMuonFwd.h"
-
 #include <memory>
 #include <string>
 
@@ -28,26 +25,39 @@ namespace edm {
 
 class SeedMvaEstimator {
 public:
-  SeedMvaEstimator( const edm::FileInPath& weightsfile, std::vector<double> scale_mean, std::vector<double> scale_std );
+  SeedMvaEstimator(const edm::FileInPath& weightsfile, std::vector<double> scale_mean, std::vector<double> scale_std);
   ~SeedMvaEstimator();
-
-  float computeMva( const TrajectorySeed&,
-    GlobalVector,
-    GlobalPoint,
-    edm::Handle<l1t::MuonBxCollection>,
-    edm::Handle<reco::RecoChargedCandidateCollection>,
-    bool IsFromL1
-  ) const;
-  
-  int sizeOfscales(){return scale_mean_.size();}
-
-private:
-  std::unique_ptr<const GBRForest> gbrForest_;
 
   std::vector<double> scale_mean_;
   std::vector<double> scale_std_;
 
-  void getL1MuonVariables( const TrajectorySeed&, GlobalVector, GlobalPoint, edm::Handle<l1t::MuonBxCollection>, float&, float&, float&, float& ) const;
-  void getL2MuonVariables( const TrajectorySeed&, GlobalVector, GlobalPoint, edm::Handle<reco::RecoChargedCandidateCollection>, float&, float&, float&, float& ) const;
+  double computeMva(const TrajectorySeed&,
+                    GlobalVector,
+                    GlobalPoint,
+                    edm::Handle<l1t::MuonBxCollection>,
+                    int minL1Qual,
+                    edm::Handle<reco::RecoChargedCandidateCollection>,
+                    bool isFromL1) const;
+
+private:
+  std::unique_ptr<const GBRForest> gbrForest_;
+
+  void getL1MuonVariables(const TrajectorySeed&,
+                          GlobalVector,
+                          GlobalPoint,
+                          edm::Handle<l1t::MuonBxCollection>,
+                          int minL1Qual,
+                          float&,
+                          float&,
+                          float&,
+                          float&) const;
+  void getL2MuonVariables(const TrajectorySeed&,
+                          GlobalVector,
+                          GlobalPoint,
+                          edm::Handle<reco::RecoChargedCandidateCollection>,
+                          float&,
+                          float&,
+                          float&,
+                          float&) const;
 };
 #endif
