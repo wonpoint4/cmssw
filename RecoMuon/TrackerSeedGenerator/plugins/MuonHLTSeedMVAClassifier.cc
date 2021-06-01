@@ -41,22 +41,20 @@ bool sortByMvaScore(const std::pair<unsigned, double>& A, const std::pair<unsign
 class MuonHLTSeedMVAClassifier : public edm::stream::EDProducer<> {
 public:
   explicit MuonHLTSeedMVAClassifier(const edm::ParameterSet&);
-  ~MuonHLTSeedMVAClassifier() override;
+  ~MuonHLTSeedMVAClassifier() override = default;
 
   static void fillDescriptions(edm::ConfigurationDescriptions& descriptions);
 
 private:
   void produce(edm::Event&, const edm::EventSetup&) override;
-  virtual void beginJob();
-  virtual void endJob();
 
   // member data
   edm::EDGetTokenT<TrajectorySeedCollection> t_Seed_;
   edm::EDGetTokenT<l1t::MuonBxCollection> t_L1Muon_;
   edm::EDGetTokenT<reco::RecoChargedCandidateCollection> t_L2Muon_;
 
-  typedef std::vector<std::pair<SeedMvaEstimator*, SeedMvaEstimator*>> pairSeedMvaEstimator;
-  pairSeedMvaEstimator mvaEstimator;
+  typedef std::pair<std::unique_ptr<const SeedMvaEstimator>, std::unique_ptr<const SeedMvaEstimator>> pairSeedMvaEstimator;
+  pairSeedMvaEstimator mvaEstimator_;
 
   edm::FileInPath mvaFileB_;
   edm::FileInPath mvaFileE_;
@@ -79,10 +77,9 @@ private:
   const int minL1Qual_;
   const double baseScore_;
 
-  double getSeedMva(pairSeedMvaEstimator pairMvaEstimator,
+  double getSeedMva(const pairSeedMvaEstimator& pairMvaEstimator,
                     const TrajectorySeed& seed,
                     GlobalVector global_p,
-                    GlobalPoint global_x,
                     edm::Handle<l1t::MuonBxCollection>& h_L1Muon,
                     int minL1Qual_,
                     edm::Handle<reco::RecoChargedCandidateCollection>& h_L2Muon,
@@ -107,7 +104,6 @@ MuonHLTSeedMVAClassifier::MuonHLTSeedMVAClassifier(const edm::ParameterSet& iCon
       isFromL1_(iConfig.getParameter<bool>("isFromL1")),
       minL1Qual_(iConfig.getParameter<int>("minL1Qual")),
       baseScore_(iConfig.getParameter<double>("baseScore")) {
-  produces<TrajectorySeedCollection>();
 
   if (!rejectAll_) {
     mvaFileB_ = iConfig.getUntrackedParameter<edm::FileInPath>("mvaFileB");
@@ -118,14 +114,12 @@ MuonHLTSeedMVAClassifier::MuonHLTSeedMVAClassifier(const edm::ParameterSet& iCon
     mvaScaleMeanE_ = iConfig.getUntrackedParameter<std::vector<double>>("mvaScaleMeanE");
     mvaScaleStdE_ = iConfig.getUntrackedParameter<std::vector<double>>("mvaScaleStdE");
 
-    mvaEstimator = {make_pair(new SeedMvaEstimator(mvaFileB_, mvaScaleMeanB_, mvaScaleStdB_),
-                              new SeedMvaEstimator(mvaFileE_, mvaScaleMeanE_, mvaScaleStdE_))};
+    mvaEstimator_ = std::make_pair(std::make_unique<SeedMvaEstimator>(mvaFileB_, mvaScaleMeanB_, mvaScaleStdB_),
+                                   std::make_unique<SeedMvaEstimator>(mvaFileE_, mvaScaleMeanE_, mvaScaleStdE_));
   }
+
+  produces<TrajectorySeedCollection>();
 }
-
-MuonHLTSeedMVAClassifier::~MuonHLTSeedMVAClassifier() {}
-
-// member functions
 
 // -- method called on each new Event
 void MuonHLTSeedMVAClassifier::produce(edm::Event& iEvent, const edm::EventSetup& iSetup) {
@@ -136,75 +130,87 @@ void MuonHLTSeedMVAClassifier::produce(edm::Event& iEvent, const edm::EventSetup
     return;
   }
 
-  edm::ESHandle<TrackerGeometry> trkGeom;
-  iSetup.get<TrackerDigiGeometryRecord>().get(trkGeom);
-
-  edm::Handle<l1t::MuonBxCollection> h_L1Muon;
-  bool hasL1 = iEvent.getByToken(t_L1Muon_, h_L1Muon);
-
-  edm::Handle<reco::RecoChargedCandidateCollection> h_L2Muon;
-  bool hasL2 = iEvent.getByToken(t_L2Muon_, h_L2Muon);
-
-  edm::Handle<TrajectorySeedCollection> h_Seed;
-
-  if (!(hasL1 && hasL2)) {
+  if (doSort_ && nSeedsMaxB_ <= 0 && nSeedsMaxE_ <= 0) {
     iEvent.put(std::move(result));
     return;
   }
 
-  // -- sort seeds by MVA score and chooes top nSeedsMaxB_ / nSeedsMaxE_
-  if (doSort_) {
-    std::vector<std::pair<unsigned, double>> pairSeedIdxMvaScoreB = {};
-    std::vector<std::pair<unsigned, double>> pairSeedIdxMvaScoreE = {};
+  if (!doSort_ && mvaCutB_ > 1. && mvaCutE_ > 1.) {
+    iEvent.put(std::move(result));
+    return;
+  }
 
-    for (auto i = 0U; i < h_Seed->size(); ++i) {
-      const auto& seed(h_Seed->at(i));
+  edm::ESHandle<TrackerGeometry> trkGeom;
+  iSetup.get<TrackerDigiGeometryRecord>().get(trkGeom);
 
-      GlobalVector global_p = trkGeom->idToDet(seed.startingState().detId())
-                                  ->surface()
-                                  .toGlobal(seed.startingState().parameters().momentum());
-      GlobalPoint global_x = trkGeom->idToDet(seed.startingState().detId())
-                                 ->surface()
-                                 .toGlobal(seed.startingState().parameters().position());
+  edm::Handle<l1t::MuonBxCollection> h_L1Muon;
+  iEvent.getByToken(t_L1Muon_, h_L1Muon);
 
-      bool isB = (std::abs(global_p.eta()) < etaEdge_);
+  edm::Handle<reco::RecoChargedCandidateCollection> h_L2Muon;
+  if(!isFromL1_) {
+    iEvent.getByToken(t_L2Muon_, h_L2Muon);
+  }
 
-      if (isB && nSeedsMaxB_ == 0) {
-        continue;
+  edm::Handle<TrajectorySeedCollection> h_Seed;
+  iEvent.getByToken(t_Seed_, h_Seed);
+
+  std::vector<std::pair<unsigned, double>> pairSeedIdxMvaScoreB = {};
+  std::vector<std::pair<unsigned, double>> pairSeedIdxMvaScoreE = {};
+  for (auto i = 0U; i < h_Seed->size(); ++i) {
+    const auto& seed(h_Seed->at(i));
+
+    GlobalVector global_p = trkGeom->idToDet(seed.startingState().detId())
+                                   ->surface().toGlobal(seed.startingState().parameters().momentum());
+
+    bool isB = (std::abs(global_p.eta()) < etaEdge_);
+
+    if (doSort_) {
+      if (isB) {
+        if (nSeedsMaxB_ <= 0) {
+          continue;
+        }
+      } else {
+        if (nSeedsMaxE_ <= 0) {
+          continue;
+        }
       }
-      if (!isB && nSeedsMaxE_ == 0) {
-        continue;
+    } else {
+      if (isB) {
+        if (mvaCutB_ > 1.0) {
+          continue;
+        } else if (mvaCutB_ <= 0.) {
+          result->emplace_back(seed);
+          continue;
+        }
+      } else {
+        if (mvaCutE_ > 1.0) {
+          continue;
+        } else if (mvaCutE_ <= 0.) {
+          result->emplace_back(seed);
+          continue;
+        }
       }
-      if (isB && mvaCutB_ > 1.0) {
-        continue;
-      }
-      if (!isB && mvaCutE_ > 1.0) {
-        continue;
-      }
-
-      if (isB && nSeedsMaxB_ < 0) {
-        result->emplace_back(seed);
-        continue;
-      }
-      if (!isB && nSeedsMaxE_ < 0) {
-        result->emplace_back(seed);
-        continue;
-      }
-
-      double mva =
-          getSeedMva(mvaEstimator, seed, global_p, global_x, h_L1Muon, minL1Qual_, h_L2Muon, isFromL1_, baseScore_);
-
-      double score = 1. / (1. + std::exp(-1. * mva));
-      bool passMva = ((isB && (score > mvaCutB_)) || (!isB && (score > mvaCutE_)));
-      if (!passMva)
-        continue;
-
-      if (isB)
-        pairSeedIdxMvaScoreB.push_back(make_pair(i, score));
-      else
-        pairSeedIdxMvaScoreE.push_back(make_pair(i, score));
     }
 
+    double mva =
+        getSeedMva(mvaEstimator_, seed, global_p, h_L1Muon, minL1Qual_, h_L2Muon, isFromL1_, baseScore_);
+
+    double score = 1. / (1. + std::exp(-1. * mva));
+    bool passMva = ((isB && (score > mvaCutB_)) || (!isB && (score > mvaCutE_)));
+    if (!passMva)
+      continue;
+
+    if (doSort_) {
+      if (isB)
+        pairSeedIdxMvaScoreB.push_back(std::make_pair(i, score));
+      else
+        pairSeedIdxMvaScoreE.push_back(std::make_pair(i, score));
+    } else {
+      result->emplace_back(seed);
+    }
+  }
+
+  if (doSort_) {
     std::sort(pairSeedIdxMvaScoreB.begin(), pairSeedIdxMvaScoreB.end(), sortByMvaScore);
     std::sort(pairSeedIdxMvaScoreE.begin(), pairSeedIdxMvaScoreE.end(), sortByMvaScore);
 
@@ -223,81 +229,27 @@ void MuonHLTSeedMVAClassifier::produce(edm::Event& iEvent, const edm::EventSetup
     }
   }
 
-  // -- simple fitering based on Mva threshold
-  else {
-    for (auto i = 0U; i < h_Seed->size(); ++i) {
-      const auto& seed(h_Seed->at(i));
-
-      GlobalVector global_p = trkGeom->idToDet(seed.startingState().detId())
-                                  ->surface()
-                                  .toGlobal(seed.startingState().parameters().momentum());
-      GlobalPoint global_x = trkGeom->idToDet(seed.startingState().detId())
-                                 ->surface()
-                                 .toGlobal(seed.startingState().parameters().position());
-
-      bool isB = (std::abs(global_p.eta()) < etaEdge_);
-
-      if (isB && mvaCutB_ > 1.0) {
-        continue;
-      }
-      if (!isB && mvaCutE_ > 1.0) {
-        continue;
-      }
-
-      if (isB && mvaCutB_ <= 0.) {
-        result->emplace_back(seed);
-        continue;
-      }
-      if (!isB && mvaCutE_ <= 0.) {
-        result->emplace_back(seed);
-        continue;
-      }
-
-      double mva =
-          getSeedMva(mvaEstimator, seed, global_p, global_x, h_L1Muon, minL1Qual_, h_L2Muon, isFromL1_, baseScore_);
-
-      double score = 1. / (1. + std::exp(-1. * mva));
-      bool passMva = ((isB && (score > mvaCutB_)) || (!isB && (score > mvaCutE_)));
-
-      if (passMva)
-        result->emplace_back(seed);
-    }
-  }
-
   iEvent.put(std::move(result));
 }
 
-double MuonHLTSeedMVAClassifier::getSeedMva(pairSeedMvaEstimator pairMvaEstimator,
+double MuonHLTSeedMVAClassifier::getSeedMva(const pairSeedMvaEstimator& pairMvaEstimator,
                                             const TrajectorySeed& seed,
                                             GlobalVector global_p,
-                                            GlobalPoint global_x,
                                             edm::Handle<l1t::MuonBxCollection>& h_L1Muon,
                                             int minL1Qual_,
                                             edm::Handle<reco::RecoChargedCandidateCollection>& h_L2Muon,
                                             bool isFromL1_,
                                             double baseScore_) {
   double mva = 0.;
-
-  for (auto ic = 0U; ic < pairMvaEstimator.size(); ++ic) {
-    if (fabs(global_p.eta()) < etaEdge_) {
-      mva = pairMvaEstimator.at(ic).first->computeMva(
-          seed, global_p, global_x, h_L1Muon, minL1Qual_, h_L2Muon, isFromL1_);
-    } else {
-      mva = pairMvaEstimator.at(ic).second->computeMva(
-          seed, global_p, global_x, h_L1Muon, minL1Qual_, h_L2Muon, isFromL1_);
-    }
+  if (std::abs(global_p.eta()) < etaEdge_) {
+    mva = pairMvaEstimator.first->computeMva(
+        seed, global_p, h_L1Muon, minL1Qual_, h_L2Muon, isFromL1_);
+  } else {
+    mva = pairMvaEstimator.second->computeMva(
+        seed, global_p, h_L1Muon, minL1Qual_, h_L2Muon, isFromL1_);
   }
 
   return (mva + baseScore_);
-}
-
-void MuonHLTSeedMVAClassifier::beginJob() {}
-
-void MuonHLTSeedMVAClassifier::endJob() {
-  for (int i = 0; i < 1; ++i) {
-    delete mvaEstimator.at(i).first;
-    delete mvaEstimator.at(i).second;
-  }
 }
 
 // -- method fills 'descriptions' with the allowed parameters for the module  ------------
@@ -320,14 +272,12 @@ void MuonHLTSeedMVAClassifier::fillDescriptions(edm::ConfigurationDescriptions& 
   desc.add<int>("minL1Qual", 7);
   desc.add<double>("baseScore", 0.5);
 
-  desc.addUntracked<edm::FileInPath>("mvaFileB",
-                                     edm::FileInPath("RecoMuon/TrackerSeedGenerator/data/Run3v6_Barrel_hltIter2.xml"));
-  desc.addUntracked<edm::FileInPath>("mvaFileE",
-                                     edm::FileInPath("RecoMuon/TrackerSeedGenerator/data/Run3v6_Barrel_hltIter2.xml"));
-  desc.addUntracked<vector<double>>("mvaScaleMeanB");
-  desc.addUntracked<vector<double>>("mvaScaleStdB");
-  desc.addUntracked<vector<double>>("mvaScaleMeanE");
-  desc.addUntracked<vector<double>>("mvaScaleStdE");
+  desc.addOptionalUntracked<edm::FileInPath>("mvaFileB", edm::FileInPath("RecoMuon/TrackerSeedGenerator/data/Run3v6_Barrel_hltIter2.xml"));
+  desc.addOptionalUntracked<edm::FileInPath>("mvaFileE", edm::FileInPath("RecoMuon/TrackerSeedGenerator/data/Run3v6_Endcap_hltIter2.xml"));
+  desc.addOptionalUntracked<std::vector<double>>("mvaScaleMeanB", {0.});
+  desc.addOptionalUntracked<std::vector<double>>("mvaScaleStdB", {1.});
+  desc.addOptionalUntracked<std::vector<double>>("mvaScaleMeanE", {0.});
+  desc.addOptionalUntracked<std::vector<double>>("mvaScaleStdE", {1.});
 
   descriptions.add("MuonHLTSeedMVAClassifier", desc);
 }

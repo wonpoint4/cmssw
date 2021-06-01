@@ -33,7 +33,6 @@ public:
 
   double computeMva(const TrajectorySeed&,
                     GlobalVector,
-                    GlobalPoint,
                     edm::Handle<l1t::MuonBxCollection>,
                     int minL1Qual,
                     edm::Handle<reco::RecoChargedCandidateCollection>,
@@ -44,19 +43,13 @@ private:
 
   void getL1MuonVariables(const TrajectorySeed&,
                           GlobalVector,
-                          GlobalPoint,
                           edm::Handle<l1t::MuonBxCollection>,
                           int minL1Qual,
-                          float&,
-                          float&,
                           float&,
                           float&) const;
   void getL2MuonVariables(const TrajectorySeed&,
                           GlobalVector,
-                          GlobalPoint,
                           edm::Handle<reco::RecoChargedCandidateCollection>,
-                          float&,
-                          float&,
                           float&,
                           float&) const;
 };

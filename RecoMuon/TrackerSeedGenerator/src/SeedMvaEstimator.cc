@@ -6,8 +6,6 @@
 #include "FWCore/ParameterSet/interface/FileInPath.h"
 #include "CommonTools/MVAUtils/interface/GBRForestTools.h"
 
-using namespace std;
-
 SeedMvaEstimator::SeedMvaEstimator(const edm::FileInPath& weightsfile,
                                    std::vector<double> scale_mean,
                                    std::vector<double> scale_std) {
@@ -38,13 +36,10 @@ namespace {
 
 void SeedMvaEstimator::getL1MuonVariables(const TrajectorySeed& seed,
                                           GlobalVector global_p,
-                                          GlobalPoint global_x,
                                           edm::Handle<l1t::MuonBxCollection> h_L1Muon,
                                           int minL1Qual,
                                           float& dRdRL1SeedP,
-                                          float& dPhidRL1SeedP,
-                                          float& dRdPhiL1SeedX,
-                                          float& dPhidPhiL1SeedX) const {
+                                          float& dPhidRL1SeedP) const {
   for (int ibx = h_L1Muon->getFirstBX(); ibx <= h_L1Muon->getLastBX(); ++ibx) {
     if (ibx != 0)
       continue;  // -- only take when ibx == 0 -- //
@@ -54,18 +49,11 @@ void SeedMvaEstimator::getL1MuonVariables(const TrajectorySeed& seed,
       if (ref_L1Mu->hwQual() < minL1Qual)
         continue;
 
-      float dR_L1SeedP_AtVtx = reco::deltaR(ref_L1Mu->etaAtVtx(), ref_L1Mu->phiAtVtx(), global_p.eta(), global_p.phi());
-      float dPhi_L1SeedP_AtVtx = reco::deltaPhi(ref_L1Mu->phiAtVtx(), global_p.phi());
-      float dR_L1SeedX_AtVtx = reco::deltaR(ref_L1Mu->etaAtVtx(), ref_L1Mu->phiAtVtx(), global_x.eta(), global_x.phi());
-      float dPhi_L1SeedX_AtVtx = reco::deltaPhi(ref_L1Mu->phiAtVtx(), global_x.phi());
+      float dR2tmp = reco::deltaR2(ref_L1Mu->etaAtVtx(), ref_L1Mu->phiAtVtx(), global_p.eta(), global_p.phi());
 
-      if (dR_L1SeedP_AtVtx < dRdRL1SeedP) {
-        dRdRL1SeedP = dR_L1SeedP_AtVtx;
-        dPhidRL1SeedP = dPhi_L1SeedP_AtVtx;
-      }
-      if (fabs(dPhi_L1SeedX_AtVtx) < fabs(dPhidPhiL1SeedX)) {
-        dRdPhiL1SeedX = dR_L1SeedX_AtVtx;
-        dPhidPhiL1SeedX = dPhi_L1SeedX_AtVtx;
+      if (dR2tmp < dRdRL1SeedP*dRdRL1SeedP) {
+        dRdRL1SeedP = std::sqrt(dR2tmp);
+        dPhidRL1SeedP = reco::deltaPhi(ref_L1Mu->phiAtVtx(), global_p.phi());
       }
     }
   }
@@ -73,38 +61,28 @@ void SeedMvaEstimator::getL1MuonVariables(const TrajectorySeed& seed,
 
 void SeedMvaEstimator::getL2MuonVariables(const TrajectorySeed& seed,
                                           GlobalVector global_p,
-                                          GlobalPoint global_x,
                                           edm::Handle<reco::RecoChargedCandidateCollection> h_L2Muon,
                                           float& dRdRL2SeedP,
-                                          float& dPhidRL2SeedP,
-                                          float& dRdPhiL2SeedX,
-                                          float& dPhidPhiL2SeedX) const {
+                                          float& dPhidRL2SeedP) const {
   for (unsigned int i_L2 = 0; i_L2 < h_L2Muon->size(); i_L2++) {
     reco::RecoChargedCandidateRef ref_L2Mu(h_L2Muon, i_L2);
 
-    float dR_L2SeedP = reco::deltaR(*ref_L2Mu, global_p);
-    float dPhi_L2SeedP = reco::deltaPhi(ref_L2Mu->phi(), global_p.phi());
-    float dR_L2SeedX = reco::deltaR(*ref_L2Mu, global_x);
-    float dPhi_L2SeedX = reco::deltaPhi(ref_L2Mu->phi(), global_x.phi());
+    float dR2tmp = reco::deltaR2(*ref_L2Mu, global_p);
 
-    if (dR_L2SeedP < dRdRL2SeedP) {
-      dRdRL2SeedP = dR_L2SeedP;
-      dPhidRL2SeedP = dPhi_L2SeedP;
-    }
-    if (fabs(dPhi_L2SeedX) < fabs(dPhidPhiL2SeedX)) {
-      dRdPhiL2SeedX = dR_L2SeedX;
-      dPhidPhiL2SeedX = dPhi_L2SeedX;
+    if (dR2tmp < dRdRL2SeedP*dRdRL2SeedP) {
+      dRdRL2SeedP = std::sqrt(dR2tmp);
+      dPhidRL2SeedP = reco::deltaPhi(ref_L2Mu->phi(), global_p.phi());
     }
   }
 }
 
 double SeedMvaEstimator::computeMva(const TrajectorySeed& seed,
                                     GlobalVector global_p,
-                                    GlobalPoint global_x,
                                     edm::Handle<l1t::MuonBxCollection> h_L1Muon,
                                     int minL1Qual,
                                     edm::Handle<reco::RecoChargedCandidateCollection> h_L2Muon,
                                     bool isFromL1) const {
+  float initDRdPhi = 99999.;
   if (isFromL1) {
     float var[kLastL1]{};
 
@@ -115,20 +93,9 @@ double SeedMvaEstimator::computeMva(const TrajectorySeed& seed,
     var[kTsosDydz] = seed.startingState().parameters().dydz();
     var[kTsosQbp] = seed.startingState().parameters().qbp();
 
-    float initDRdPhi = 99999.;
-
     float dRdRL1SeedP = initDRdPhi;
     float dPhidRL1SeedP = initDRdPhi;
-    float dRdPhiL1SeedX = initDRdPhi;
-    float dPhidPhiL1SeedX = initDRdPhi;
-    getL1MuonVariables(
-        seed, global_p, global_x, h_L1Muon, minL1Qual, dRdRL1SeedP, dPhidRL1SeedP, dRdPhiL1SeedX, dPhidPhiL1SeedX);
-
-    float dRdRL2SeedP = initDRdPhi;
-    float dPhidRL2SeedP = initDRdPhi;
-    float dRdPhiL2SeedX = initDRdPhi;
-    float dPhidPhiL2SeedX = initDRdPhi;
-    getL2MuonVariables(seed, global_p, global_x, h_L2Muon, dRdRL2SeedP, dPhidRL2SeedP, dRdPhiL2SeedX, dPhidPhiL2SeedX);
+    getL1MuonVariables(seed, global_p, h_L1Muon, minL1Qual, dRdRL1SeedP, dPhidRL1SeedP);
 
     var[kDRdRL1SeedP] = dRdRL1SeedP;
     var[kDPhidRL1SeedP] = dPhidRL1SeedP;
@@ -148,20 +115,13 @@ double SeedMvaEstimator::computeMva(const TrajectorySeed& seed,
     var[kTsosDydz] = seed.startingState().parameters().dydz();
     var[kTsosQbp] = seed.startingState().parameters().qbp();
 
-    float initDRdPhi = 99999.;
-
     float dRdRL1SeedP = initDRdPhi;
     float dPhidRL1SeedP = initDRdPhi;
-    float dRdPhiL1SeedX = initDRdPhi;
-    float dPhidPhiL1SeedX = initDRdPhi;
-    getL1MuonVariables(
-        seed, global_p, global_x, h_L1Muon, minL1Qual, dRdRL1SeedP, dPhidRL1SeedP, dRdPhiL1SeedX, dPhidPhiL1SeedX);
+    getL1MuonVariables(seed, global_p, h_L1Muon, minL1Qual, dRdRL1SeedP, dPhidRL1SeedP);
 
     float dRdRL2SeedP = initDRdPhi;
     float dPhidRL2SeedP = initDRdPhi;
-    float dRdPhiL2SeedX = initDRdPhi;
-    float dPhidPhiL2SeedX = initDRdPhi;
-    getL2MuonVariables(seed, global_p, global_x, h_L2Muon, dRdRL2SeedP, dPhidRL2SeedP, dRdPhiL2SeedX, dPhidPhiL2SeedX);
+    getL2MuonVariables(seed, global_p, h_L2Muon, dRdRL2SeedP, dPhidRL2SeedP);
 
     var[kDRdRL1SeedP] = dRdRL1SeedP;
     var[kDPhidRL1SeedP] = dPhidRL1SeedP;
