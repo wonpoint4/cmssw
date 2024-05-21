@@ -1,9 +1,11 @@
 /**  \class HLTMuonL2SelectorForL3IO
- * 
+ *
  *   L2 muon selector for L3 IO:
- *   finds L2 muons not previous converted into (good) L3 muons
+ *   finds L2 muons previously converted/not converted into (good) L3 muons
  *
  *   \author  Benjamin Radburn-Smith, Santiago Folgueras - Purdue University
+ *
+ *            Edited by Won Jun (May 2024)               - Seoul National University
  */
 
 #include "RecoMuon/L3TrackFinder/interface/HLTMuonL2SelectorForL3IO.h"
@@ -19,6 +21,7 @@ HLTMuonL2SelectorForL3IO::HLTMuonL2SelectorForL3IO(const edm::ParameterSet& iCon
       l3OISrc_(consumes<reco::RecoChargedCandidateCollection>(iConfig.getParameter<edm::InputTag>("l3OISrc"))),
       l3linkToken_(consumes<reco::MuonTrackLinksCollection>(iConfig.getParameter<edm::InputTag>("InputLinks"))),
       applyL3Filters_(iConfig.getParameter<bool>("applyL3Filters")),
+      selectMatched_(iConfig.getParameter<bool>("selectMatched")),
       max_NormalizedChi2_(iConfig.getParameter<double>("MaxNormalizedChi2")),
       max_PtDifference_(iConfig.getParameter<double>("MaxPtDifference")),
       min_Nhits_(iConfig.getParameter<int>("MinNhits")),
@@ -45,7 +48,7 @@ void HLTMuonL2SelectorForL3IO::produce(edm::Event& iEvent, const edm::EventSetup
   edm::Handle<reco::MuonTrackLinksCollection> links;
   iEvent.getByToken(l3linkToken_, links);
 
-  //	OUT:
+  //  OUT:
   std::unique_ptr<reco::TrackCollection> result(new reco::TrackCollection());
 
   for (unsigned int il2 = 0; il2 != l2muonH->size(); ++il2) {
@@ -91,8 +94,13 @@ void HLTMuonL2SelectorForL3IO::produce(edm::Event& iEvent, const edm::EventSetup
         }
       }
     }
-    if (re_do_this_L2)
-      result->push_back(*l2muRef);  // used the L2 if no L3 if matched or if the matched L3 has poor quality cuts.
+    if (!selectMatched_) {
+      if (re_do_this_L2)
+        result->push_back(*l2muRef);  // select the L2 if no L3 if matched or if the matched L3 has poor quality cuts.
+    } else {
+      if (!re_do_this_L2)
+        result->push_back(*l2muRef);  // select the L2 if matched L3 has good quality cuts.
+    }
   }
   iEvent.put(std::move(result));
 }
@@ -103,6 +111,7 @@ void HLTMuonL2SelectorForL3IO::fillDescriptions(edm::ConfigurationDescriptions& 
   desc.add<edm::InputTag>("l3OISrc", edm::InputTag("hltNewOIL3MuonCandidates"));
   desc.add<edm::InputTag>("InputLinks", edm::InputTag("hltNewOIL3MuonsLinksCombination"));
   desc.add<bool>("applyL3Filters", true);
+  desc.add<bool>("selectMatched", false); // select L2 (not) matched to L3
   desc.add<int>("MinNhits", 1);
   desc.add<double>("MaxNormalizedChi2", 20.0);
   desc.add<int>("MinNmuonHits", 0);

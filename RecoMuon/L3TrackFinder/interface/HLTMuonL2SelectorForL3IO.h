@@ -2,11 +2,13 @@
 #define RecoMuon_HLTMuonL2SelectorForL3IO_HLTMuonL2SelectorForL3IO_H
 
 /**  \class HLTMuonL2SelectorForL3IO
- * 
+ *
  *   L2 muon selector for L3 IO:
- *   finds L2 muons not previous converted into (good) L3 muons 
+ *   finds L2 muons previously converted/not converted into (good) L3 muons
  *
  *   \author  Benjamin Radburn-Smith, Santiago Folgueras - Purdue University
+ *
+ *            Edited by Won Jun (May 2024)               - Seoul National University
  */
 
 #include "FWCore/Framework/interface/stream/EDProducer.h"
@@ -42,7 +44,7 @@ private:
   const edm::EDGetTokenT<reco::TrackCollection> l2Src_;
   const edm::EDGetTokenT<reco::RecoChargedCandidateCollection> l3OISrc_;
   const edm::EDGetTokenT<reco::MuonTrackLinksCollection> l3linkToken_;
-  const bool applyL3Filters_;
+  const bool applyL3Filters_, selectMatched_;
   const double max_NormalizedChi2_, max_PtDifference_;
   const int min_Nhits_, min_NmuonHits_;
 };
